@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Smart Drone Tracker</title>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron&display=swap" rel="stylesheet">
+
+    <style>
+        body {
+            margin: 0;
+            font-family: 'Orbitron', sans-serif;
+            background-color: #121212;
+            color: #f1f1f1;
+        }
+
+        header {
+            background-color: #1f1f1f;
+            padding: 1rem;
+            text-align: center;
+            font-size: 1.5rem;
+            border-bottom: 2px solid #00ffd5;
+        }
+
+        #container {
+            display: flex;
+            flex-direction: row;
+            height: calc(100vh - 70px);
+        }
+
+        #drone-info {
+            width: 300px;
+            background: #1e1e1e;
+            padding: 1rem;
+            border-right: 2px solid #00ffd5;
+        }
+
+        #drone-info h2 {
+            color: #00ffd5;
+            text-align: center;
+            margin-bottom: 1rem;
+        }
+
+        #drone-info p {
+            font-size: 1rem;
+            margin: 0.5rem 0;
+        }
+
+        #map {
+            flex-grow: 1;
+        }
+
+        .label {
+            color: #aaaaaa;
+        }
+
+        .value {
+            color: #00ffd5;
+        }
+
+        .pulse {
+            position: absolute;
+            width: 48px;
+            height: 48px;
+            background: rgba(0, 255, 213, 0.4);
+            border-radius: 50%;
+            animation: pulse-animation 2s infinite;
+            z-index: 1;
+            transform: translate(-50%, -50%);
+        }
+
+        @keyframes pulse-animation {
+            0% {
+                transform: scale(1);
+                opacity: 0.6;
+            }
+
+            70% {
+                transform: scale(2.5);
+                opacity: 0;
+            }
+
+            100% {
+                transform: scale(1);
+                opacity: 0;
+            }
+        }
+
+        @media (max-width: 768px) {
+  #container {
+    flex-direction: column;
+  }
+
+  #drone-info {
+    width: 100%;
+    border-right: none;
+    border-bottom: 2px solid #00ffd5;
+  }
+
+  #map {
+    height: 60vh;
+  }
+
+  header {
+    font-size: 1.2rem;
+    padding: 0.75rem;
+  }
+
+  #drone-info p {
+    font-size: 0.95rem;
+  }
+}
+
+@media (max-width: 480px) {
+  header {
+    font-size: 1rem;
+  }
+
+  #drone-info p {
+    font-size: 0.9rem;
+  }
+
+  .pulse {
+    width: 36px;
+    height: 36px;
+  }
+}
+
+    </style>
+
+    
+</head>
+
+<body>
+    <header>🚁 Smart Drone Fleet Tracker</header>
+    <div id="container">
+        <div id="drone-info">
+            <h2>Drone Info</h2>
+            <p><span class="label">ID:</span> <span class="value">drone1</span></p>
+            <p><span class="label">Latitude:</span> <span id="lat" class="value">--</span></p>
+            <p><span class="label">Longitude:</span> <span id="lng" class="value">--</span></p>
+            <p><span class="label">Speed:</span> <span id="speed" class="value">--</span> km/h</p>
+            <p><span class="label">Direction:</span> <span id="dir" class="value">--</span>°</p>
+        </div>
+        <div id="map"></div>
+    </div>
+
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js"></script>
+
+    <!-- Google Maps API -->
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyD8NuvVCOnSm8a3kUB9I0WsIAuHWBuvnDY"></script>
+
+    <!-- Live Map + Firebase Logic -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-app.js";
+        import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/9.23.0/firebase-database.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyCCKYdCAXG2Np5vh1-Nnsk0YCLIU-n8vdw",
+            authDomain: "smart-drone-fleet-arun.firebaseapp.com",
+            databaseURL: "https://smart-drone-fleet-arun-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "smart-drone-fleet-arun"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+
+        let map;
+        let marker;
+        let polyline;
+        let path = [];
+        let pulseDiv;
+
+        function initMap(lat = 12.9716, lng = 77.5946) {
+            const center = { lat, lng };
+
+            class PulseOverlay extends google.maps.OverlayView {
+                constructor(position, map) {
+                    super();
+                    this.position = position;
+                    this.map = map;
+                    this.div = null;
+                    this.setMap(map);
+                }
+
+                onAdd() {
+                    this.div = document.createElement('div');
+                    this.div.className = 'pulse';
+                    const panes = this.getPanes();
+                    panes.overlayMouseTarget.appendChild(this.div);
+                }
+
+                draw() {
+                    const overlayProjection = this.getProjection();
+                    const pixel = overlayProjection.fromLatLngToDivPixel(this.position);
+                    if (pixel && this.div) {
+                        this.div.style.left = pixel.x - 25 + 'px';
+                        this.div.style.top = pixel.y - 50 + 'px';
+                    }
+                }
+
+                onRemove() {
+                    if (this.div) {
+                        this.div.parentNode.removeChild(this.div);
+                        this.div = null;
+                    }
+                }
+
+                update(position) {
+                    this.position = position;
+                    this.draw();
+                }
+            }
+
+
+
+            map = new google.maps.Map(document.getElementById("map"), {
+                zoom: 16,
+                center: center,
+                mapTypeId: "roadmap",
+                styles: [
+                    { elementType: "geometry", stylers: [{ color: "#e9eef6" }] },
+                    { elementType: "labels.text.fill", stylers: [{ color: "#37474f" }] },
+                    { elementType: "labels.text.stroke", stylers: [{ color: "#ffffff" }] },
+
+                    { featureType: "administrative.country", elementType: "geometry.stroke", stylers: [{ color: "#90a4ae" }] },
+                    { featureType: "administrative.locality", elementType: "labels.text.fill", stylers: [{ color: "#263238" }] },
+
+                    { featureType: "poi", elementType: "geometry", stylers: [{ color: "#cfd8dc" }] },
+                    { featureType: "poi", elementType: "labels.text.fill", stylers: [{ color: "#546e7a" }] },
+
+                    { featureType: "road", elementType: "geometry", stylers: [{ color: "#ffffff" }] },
+                    { featureType: "road", elementType: "geometry.stroke", stylers: [{ color: "#b0bec5" }] },
+                    { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#455a64" }] },
+
+                    { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#b3e5fc" }] },
+                    { featureType: "road.highway", elementType: "geometry.stroke", stylers: [{ color: "#81d4fa" }] },
+                    { featureType: "road.highway", elementType: "labels.text.fill", stylers: [{ color: "#01579b" }] },
+
+                    { featureType: "transit", elementType: "geometry", stylers: [{ color: "#b0bec5" }] },
+                    { featureType: "transit", elementType: "labels.text.fill", stylers: [{ color: "#607d8b" }] },
+
+                    { featureType: "water", elementType: "geometry", stylers: [{ color: "#bbdefb" }] },
+                    { featureType: "water", elementType: "labels.text.fill", stylers: [{ color: "#0277bd" }] }
+                ]
+
+
+            });
+
+
+
+
+            marker = new google.maps.Marker({
+                position: center,
+                map: map,
+                icon: {
+                    url: "https://cdn-icons-png.flaticon.com/128/3179/3179076.png",
+                    scaledSize: new google.maps.Size(40, 40)
+                },
+                title: "Drone 1"
+            });
+
+
+
+            polyline = new google.maps.Polyline({
+                path: [],
+                geodesic: true,
+                strokeColor: "#00ffd5",
+                strokeOpacity: 0.75,
+                strokeWeight: 2,
+                map: map
+            });
+
+            window.pulseOverlay = new PulseOverlay(center, map);
+        }
+
+
+
+
+        initMap();
+
+        const droneRef = ref(db, "drones/drone1");
+
+        onValue(droneRef, (snapshot) => {
+            const data = snapshot.val();
+            if (data) {
+                const { latitude, longitude, speed, direction } = data;
+                const position = { lat: latitude, lng: longitude };
+
+                document.getElementById("lat").innerText = latitude.toFixed(5);
+                document.getElementById("lng").innerText = longitude.toFixed(5);
+                document.getElementById("speed").innerText = speed.toFixed(1);
+                document.getElementById("dir").innerText = direction.toFixed(1);
+
+                marker.setPosition(position);
+                map.setCenter(position);
+
+                path.push(position);
+                polyline.setPath(path);
+
+                const scale = map.getZoom();
+                const projection = map.getProjection();
+                const bounds = map.getBounds();
+                if (projection && bounds) {
+                    const point = projection.fromLatLngToPoint(new google.maps.LatLng(position));
+                    const mapDiv = map.getDiv();
+                    const scale = Math.pow(2, map.getZoom());
+                    const worldPoint = map.getProjection().fromLatLngToPoint(new google.maps.LatLng(position));
+                    const pixelOffset = {
+                        x: worldPoint.x * scale,
+                        y: worldPoint.y * scale
+                    };
+
+                    if (window.pulseOverlay) {
+                        window.pulseOverlay.update(new google.maps.LatLng(position));
+                    }
+
+                }
+            }
+        });
+    </script>
+
+
+
+</body>
+
+</html>
